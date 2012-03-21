@@ -5,31 +5,31 @@ all: libcpglock.so cpglockd locktest lock lockstress many thread thread2 try man
 cpglockd: sock.o cpglockd.o
 	gcc -o $@ $^ -lcpg
 
-libcpglock.so: sock.o libcpglock.o gettid.o
+libcpglock.so: sock.o libcpglock.o 
 	gcc -o $@ $^ -shared 
 
 locktest: libcpglock.so locktest.o
 	gcc -o locktest -L. -lcpglock locktest.o -lpthread
 
-lock: locktest.o sock.o libcpglock.o gettid.o
+lock: locktest.o sock.o libcpglock.o
 	gcc -o $@ -L. $^ -lpthread
 
-lockstress: lockstress.o sock.o libcpglock.o gettid.o
+lockstress: lockstress.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
-many: many.o sock.o libcpglock.o gettid.o
+many: many.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
-thread: thread.o sock.o libcpglock.o gettid.o
+thread: thread.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
-thread2: thread2.o sock.o libcpglock.o gettid.o
+thread2: thread2.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
-many2: many2.o sock.o libcpglock.o gettid.o
+many2: many2.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
-try: try.o sock.o libcpglock.o gettid.o
+try: try.o sock.o libcpglock.o
 	gcc -o $@ -L. $^  -lpthread
 
 check: locktest

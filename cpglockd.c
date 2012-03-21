@@ -1055,11 +1055,8 @@ main(int argc, char **argv)
 	int afd = -1;
 	int n,x;
 
-	struct cpg_lock l;
 	struct cpg_lock_msg m;
 	struct client_node *client;
-
-	l.state = 0;
 
 	signal(SIGPIPE, SIG_IGN);
 
