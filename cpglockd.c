@@ -717,7 +717,7 @@ process_grant(struct cpg_lock_msg *m, uint32_t nodeid)
 
 	/* Record lock state since we now know it */
 	/* Allocate a lock structure */
-	l = do_alloc(sizeof(*m));
+	l = do_alloc(sizeof(*l));
 	strncpy(l->l.resource, m->resource, sizeof(l->l.resource));
 	l->l.state = LOCK_HELD;
 	l->l.owner_nodeid = m->owner_nodeid;
