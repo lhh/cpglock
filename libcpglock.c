@@ -169,7 +169,8 @@ cpg_lock(void *handle, const char *resource, lock_flag_t flags, struct cpg_lock 
 
 	if (r.request == MSG_NAK) {
 		errno = EAGAIN;
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	if (r.request != MSG_GRANT) {
