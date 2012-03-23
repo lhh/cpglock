@@ -356,6 +356,7 @@ del_client(int fd)
 	/* This may not be needed */
 	purge_requests(my_node_id, pid);
 
+	memset(&m, 0, sizeof(m));
 	m.request = MSG_PURGE;
 	m.owner_nodeid = my_node_id;
 	m.owner_pid = pid;
@@ -400,6 +401,7 @@ del_node(uint32_t nodeid)
 	/* This may not be needed */
 	purge_requests(nodeid, 0);
 
+	memset(&m, 0, sizeof(m));
 	m.request = MSG_PURGE;
 	m.owner_nodeid = nodeid;
 	m.owner_pid = 0;
@@ -493,7 +495,7 @@ grant_client(struct lock_node *l)
 	struct client_node *c;
 	struct cpg_lock_msg m;
 
-	//memset(&m, 0, sizeof(m));
+	memset(&m, 0, sizeof(m));
 	strncpy(m.resource, l->l.resource, sizeof(m.resource));
 	m.request = MSG_GRANT;
 	m.owner_pid = l->l.owner_pid;
@@ -529,6 +531,7 @@ nak_client(struct request_node *l)
 	struct client_node *c;
 	struct cpg_lock_msg m;
 
+	memset(&m, 0, sizeof(m));
 	strncpy(m.resource, l->l.resource, sizeof(m.resource));
 	m.request = MSG_NAK;
 	m.owner_pid = l->l.owner_pid;
