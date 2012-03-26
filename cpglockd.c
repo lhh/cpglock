@@ -202,11 +202,15 @@ static int
 send_lock_msg(struct cpg_lock_msg *m)
 {
 	struct iovec iov;
+	int ret;
 
 	iov.iov_base = m;
 	iov.iov_len = sizeof (*m);
 
-	return cpg_mcast_joined(cpg, CPG_TYPE_AGREED, &iov, 1);
+	ret = cpg_mcast_joined(cpg, CPG_TYPE_AGREED, &iov, 1);
+	if (ret != CPG_OK)
+		return -1;
+	return 0;
 }
 
 
