@@ -784,8 +784,10 @@ process_unlock(struct cpg_lock_msg *m, uint32_t nodeid)
 		    l->l.owner_pid == m->owner_pid) {
 			printf("UNLOCK %s: %d:%d:%d\n", m->resource, m->owner_nodeid, m->owner_pid, m->owner_tid);
 			l->l.state = LOCK_FREE;
-			//if (grant_next(m) != 0)
-				//l->l.state = LOCK_PENDING;
+			if (l->l.owner_nodeid == my_node_id) {
+				if (grant_next(m) != 0)
+					l->l.state = LOCK_PENDING;
+			}
 		}
 	}
 
