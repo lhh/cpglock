@@ -2,7 +2,7 @@ CFLAGS=-Wall -Wformat=2 -Wshadow -Wmissing-prototypes -Wstrict-prototypes -Wdecl
 
 all: libcpglock.so cpglockd locktest lock lockstress many thread thread2 try many2
 
-cpglockd: sock.o cpglockd.o
+cpglockd: sock.o daemon_init.o cpglockd.o
 	gcc -o $@ $^ -lcpg
 
 libcpglock.so: sock.o libcpglock.o 

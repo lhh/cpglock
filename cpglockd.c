@@ -11,6 +11,7 @@
 #include <sys/uio.h>
 #include <corosync/cpg.h>
 
+#include "daemon_init.h"
 #include "sock.h"
 #include "cpglock.h"
 #include "cpglock-internal.h"
@@ -1065,14 +1066,43 @@ main(int argc, char **argv)
 	int cpgfd;
 	int afd = -1;
 	int n,x;
-
+	int nofork = 0;
+	int opt;
 	struct cpg_lock_msg m;
 	struct client_node *client;
+
+	while ((opt = getopt(argc, argv, "fh")) != EOF) {
+		switch (opt) {
+			case 'f':
+				nofork = 1;
+				break;
+			case 'h':
+				printf("Usage: %s [options]\n\
+ -f      Don't daemonize\n\
+ -h      Print this help message\n",
+					argv[0]);
+				return 0;
+		}
+	}
 
 	signal(SIGPIPE, SIG_IGN);
 
 	fd = sock_listen(CPG_LOCKD_SOCK);
-	cpg_init();
+	if (fd < 0) {
+		fprintf(stderr, "Error connecting to %s: %s\n",
+			CPG_LOCKD_SOCK, strerror(errno));
+		return -1;
+	}
+
+	if (!nofork)
+		daemon_init((char *) "cpglockd");
+
+	if (cpg_init() < 0) {
+		fprintf(stderr, "Unable to join CPG group\n");
+		close(fd);
+		return -1;
+	}
+
 	cpg_local_get(cpg, &my_node_id);
 	cpg_fd_get(cpg, &cpgfd);
 	if (send_join() < 0)
