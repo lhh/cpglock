@@ -1095,7 +1095,7 @@ main(int argc, char **argv)
 		}
 
 		if (FD_ISSET(cpgfd, &rfds)) {
-			cpg_dispatch(cpg, CPG_DISPATCH_ONE);
+			cpg_dispatch(cpg, CPG_DISPATCH_ALL);
 			--n;
 		}
 
