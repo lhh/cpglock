@@ -1,6 +1,12 @@
 #ifndef _CPGLOCK_INT_H
 #define _CPGLOCK_INT_H
 
+#ifdef CPGLOCK_DEBUG
+#	define cpgl_debug(format, args...) do { printf(format, ##args); } while (0)
+#else
+#	define cpgl_debug(format, args...) do { } while (0)
+#endif
+
 #ifndef CPG_LOCKD_SOCK
 #define CPG_LOCKD_SOCK "/var/run/cpglockd.sk"
 #endif

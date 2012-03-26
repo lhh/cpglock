@@ -145,7 +145,8 @@ cpg_lock(void *handle, const char *resource, lock_flag_t flags, struct cpg_lock 
 		}
 
 		if (strcmp(r.resource, l.resource)) {
-			printf("NOTE: msg for wrong lock want: %s got: %s\n", l.resource, r.resource);
+			cpgl_debug("NOTE: msg for wrong lock want: %s got: %s\n",
+				l.resource, r.resource);
 			add_pending(&h->pending, &r);
 			pthread_mutex_unlock(&h->mutex);
 			usleep(random() & 16383);
@@ -153,7 +154,8 @@ cpg_lock(void *handle, const char *resource, lock_flag_t flags, struct cpg_lock 
 			continue;
 		}
 		if (r.owner_tid != l.owner_tid) {
-			printf("NOTE: msg for wrong seq want: %d got: %d\n", l.owner_tid, r.owner_tid );
+			cpgl_debug("NOTE: msg for wrong seq want: %d got: %d\n",
+				l.owner_tid, r.owner_tid );
 			add_pending(&h->pending, &r);
 			pthread_mutex_unlock(&h->mutex);
 			usleep(random() & 16383);

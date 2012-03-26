@@ -229,7 +229,7 @@ send_grant(struct request_node *n)
 {
 	struct cpg_lock_msg m;
 
-	printf("-> sending grant %s to %d:%d:%d\n",
+	cpgl_debug("-> sending grant %s to %d:%d:%d\n",
 		n->l.resource, n->l.owner_nodeid, n->l.owner_pid, n->l.owner_tid);
 
 	memset(&m, 0, sizeof(m));
@@ -288,7 +288,7 @@ grant_next(struct cpg_lock_msg *m)
 
 		/* Send grant */
 		if (r->l.state == LOCK_PENDING) {
-			printf("LOCK %s: grant to %d:%d:%d\n", m->resource,
+			cpgl_debug("LOCK %s: grant to %d:%d:%d\n", m->resource,
 			       r->l.owner_nodeid, r->l.owner_pid, r->l.owner_tid);
 			/* don't send dup grants */
 			r->l.state = LOCK_HELD;
@@ -325,9 +325,9 @@ purge_requests(uint32_t nodeid, uint32_t pid)
 
 	if (count) {
 		if (pid) {
-			printf("RECOVERY: purged %d requests from %d:%d\n", count, nodeid, pid);
+			cpgl_debug("RECOVERY: purged %d requests from %d:%d\n", count, nodeid, pid);
 		} else {
-			printf("RECOVERY: purged %d requests from node %d\n", count, nodeid);
+			cpgl_debug("RECOVERY: purged %d requests from node %d\n", count, nodeid);
 		}
 	}
 }
@@ -355,7 +355,7 @@ del_client(int fd)
 	if (!pid)
 		return;
 
-	printf("RECOVERY: Looking for locks held by PID %d\n", pid);
+	cpgl_debug("RECOVERY: Looking for locks held by PID %d\n", pid);
 
 	/* This may not be needed */
 	purge_requests(my_node_id, pid);
@@ -373,7 +373,7 @@ del_client(int fd)
 		    l->l.state != LOCK_HELD)
 			continue;
 
-		printf("RECOVERY: Releasing %s \n", l->l.resource);
+		cpgl_debug("RECOVERY: Releasing %s \n", l->l.resource);
 
 		l->l.state = LOCK_FREE;
 		strncpy(m.resource, l->l.resource, sizeof(m.resource));
@@ -382,9 +382,9 @@ del_client(int fd)
 	}
 
 	if (recovered) {
-		printf("RECOVERY: %d locks from local PID %d\n", recovered, pid);
+		cpgl_debug("RECOVERY: %d locks from local PID %d\n", recovered, pid);
 	}
-	printf("RECOVERY: Complete\n");
+	cpgl_debug("RECOVERY: Complete\n");
 }
 
 
@@ -398,7 +398,7 @@ del_node(uint32_t nodeid)
 	if (group_members->nodeid != my_node_id)
 		return;
 
-	printf("RECOVERY: I am oldest node in the group, recovering locks\n");
+	cpgl_debug("RECOVERY: I am oldest node in the group, recovering locks\n");
 
 	/* pass 1: purge outstanding requests from this node. */
 
@@ -415,8 +415,8 @@ del_node(uint32_t nodeid)
 	list_for(&locks, l, x) {
 		if (l->l.owner_nodeid == nodeid && 
 		    l->l.state == LOCK_HELD) {
-			printf("RECOVERY: Releasing %s held by dead node %d\n", l->l.resource,
-			       nodeid);
+			cpgl_debug("RECOVERY: Releasing %s held by dead node %d\n",
+				l->l.resource, nodeid);
 
 			l->l.state = LOCK_FREE;
 			strncpy(m.resource, l->l.resource, sizeof(m.resource));
@@ -431,13 +431,13 @@ del_node(uint32_t nodeid)
 	}
 
 	if (recovered) {
-		printf("RECOVERY: %d locks from node %d\n", recovered, nodeid);
+		cpgl_debug("RECOVERY: %d locks from node %d\n", recovered, nodeid);
 	}
 	if (granted) {
-		printf("RECOVERY: %d pending locks granted\n", granted);
+		cpgl_debug("RECOVERY: %d pending locks granted\n", granted);
 	}
 
-	printf("RECOVERY: Complete\n");
+	cpgl_debug("RECOVERY: Complete\n");
 }
 
 
@@ -510,19 +510,19 @@ grant_client(struct lock_node *l)
 
 	c = find_client(l->l.owner_pid);
 	if (!c) {
-		printf("can't find client for pid %d\n", l->l.owner_pid);
+		cpgl_debug("can't find client for pid %d\n", l->l.owner_pid);
 		return 1;
 	}
 
 	if (c->fd < 0) {
-		printf(" Client has bad fd\n");
+		cpgl_debug(" Client has bad fd\n");
 		return -1;
 	}
 
 	if (write_retry(c->fd, &m, sizeof(m), NULL) < 0) {
 		/* no client anymore; drop and send to next guy XXX */
 		/* This should be handled by our main loop */
-		//printf("Failed to notify client!\n");
+		//cpgl_debug("Failed to notify client!\n");
 	}
 
 	return 0;
@@ -544,19 +544,19 @@ nak_client(struct request_node *l)
 
 	c = find_client(l->l.owner_pid);
 	if (!c) {
-		printf("can't find client for pid %d\n", l->l.owner_pid);
+		cpgl_debug("can't find client for pid %d\n", l->l.owner_pid);
 		return 1;
 	}
 
 	if (c->fd < 0) {
-		printf(" Client has bad fd\n");
+		cpgl_debug(" Client has bad fd\n");
 		return -1;
 	}
 
 	if (write_retry(c->fd, &m, sizeof(m), NULL) < 0) {
 		/* no client anymore; drop and send to next guy XXX */
 		/* This should be handled by our main loop */
-		//printf("Failed to notify client!\n");
+		//cpgl_debug("Failed to notify client!\n");
 	}
 
 	return 0;
@@ -588,7 +588,7 @@ process_lock(struct cpg_lock_msg *m)
 	if (!joined)
 		return 0;
 
-	printf("LOCK %s: queue for %d:%d:%d\n", m->resource,
+	cpgl_debug("LOCK %s: queue for %d:%d:%d\n", m->resource,
 	       m->owner_nodeid, m->owner_pid, m->owner_tid);
 	queue_request(m);
 
@@ -664,14 +664,14 @@ process_grant(struct cpg_lock_msg *m, uint32_t nodeid)
 		if (l->l.state == LOCK_HELD) {
 			if (m->owner_pid == 0 ||
 			    m->owner_nodeid == 0) {
-				printf("GRANT averted\n");
+				cpgl_debug("GRANT averted\n");
 				return 0;
 			}
 		} else {
 			l->l.state = LOCK_HELD;
 		}
 
-		printf("GRANT %s: to %d:%d:%d\n",
+		cpgl_debug("GRANT %s: to %d:%d:%d\n",
 			m->resource, m->owner_nodeid,
 			m->owner_pid, m->owner_tid);
 
@@ -712,7 +712,8 @@ process_grant(struct cpg_lock_msg *m, uint32_t nodeid)
 		if (group_members->nodeid == my_node_id &&
 		    !is_member(l->l.owner_nodeid)) {
 
-			printf("GRANT to non-member %d; giving to next requestor\n", l->l.owner_nodeid);
+			cpgl_debug("GRANT to non-member %d; giving to next requestor\n",
+				l->l.owner_nodeid);
 			
 			l->l.state = LOCK_FREE;
 			if (grant_next(m) == 0)
@@ -786,7 +787,8 @@ process_unlock(struct cpg_lock_msg *m, uint32_t nodeid)
                    GRANT to the first node on the request queue */
 		if (l->l.owner_nodeid == m->owner_nodeid &&
 		    l->l.owner_pid == m->owner_pid) {
-			printf("UNLOCK %s: %d:%d:%d\n", m->resource, m->owner_nodeid, m->owner_pid, m->owner_tid);
+			cpgl_debug("UNLOCK %s: %d:%d:%d\n",
+				m->resource, m->owner_nodeid, m->owner_pid, m->owner_tid);
 			l->l.state = LOCK_FREE;
 			if (l->l.owner_nodeid == my_node_id) {
 				if (grant_next(m) != 0)
@@ -811,7 +813,7 @@ find_lock(struct cpg_lock_msg *m)
 	list_for(&locks, l, x) {
 		if (m->lockid == l->l.local_id) {
 			strncpy(m->resource, l->l.resource, sizeof(m->resource));
-			printf("LOCK %d -> %s\n", m->lockid, m->resource);
+			cpgl_debug("LOCK %d -> %s\n", m->lockid, m->resource);
 			m->owner_nodeid = l->l.owner_nodeid;
 			m->owner_pid = l->l.owner_pid;
 			m->owner_tid = l->l.owner_tid;
@@ -834,20 +836,20 @@ process_join(struct cpg_lock_msg *m, uint32_t nodeid)
 		if (n->nodeid == nodeid) {
 			list_remove(&group_members, n);
 			list_append(&group_members, n);
-			printf("JOIN: moving %d to back\n", nodeid);
+			cpgl_debug("JOIN: moving %d to back\n", nodeid);
 			return 0;
 		}
 	}
 
 	n = do_alloc(sizeof(*n));
 	n->nodeid = nodeid;
-	printf("JOIN: node %d", n->nodeid);
+	cpgl_debug("JOIN: node %d", n->nodeid);
 	if (nodeid == my_node_id) {
-		printf(" (self)");
+		cpgl_debug(" (self)");
 		joined = 1;
 	}
 	total_members++;
-	printf("\n");
+	cpgl_debug("\n");
 	list_insert(&group_members, n);
 
 	return 0;
@@ -858,7 +860,7 @@ static int
 process_request(struct cpg_lock_msg *m, uint32_t nodeid)
 {
 	if (m->request == MSG_HALT) {
-		printf("FAULT: Halting operations; see node %d\n", m->owner_nodeid);
+		cpgl_debug("FAULT: Halting operations; see node %d\n", m->owner_nodeid);
 		while (1) 
 			sleep(30);
 	}
@@ -900,7 +902,7 @@ cpg_deliver_func(cpg_handle_t h,
 {
 
 	if (msglen != sizeof(struct cpg_lock_msg)) {
-		printf("Invalid message size %d\n", (int)msglen);
+		cpgl_debug("Invalid message size %d\n", (int)msglen);
 	}
 
 	process_request((struct cpg_lock_msg *)msg, nodeid);
@@ -927,7 +929,7 @@ cpg_config_change(cpg_handle_t h,
 
 	if (total_members == 0) {
 				
-		printf("JOIN: Setting up initial node list\n");
+		cpgl_debug("JOIN: Setting up initial node list\n");
 		for (x = 0; x < memberlen; x++) {
 			for (y = 0; y < joinlen; y++) {
 				if (join[y].nodeid == members[x].nodeid)
@@ -937,16 +939,16 @@ cpg_config_change(cpg_handle_t h,
 
 				n = do_alloc(sizeof(*n));
 				n->nodeid = members[x].nodeid;
-				printf("JOIN: node %d\n", n->nodeid);
+				cpgl_debug("JOIN: node %d\n", n->nodeid);
 				list_insert(&group_members, n);
 			}
 		}
-		printf("JOIN: Done\n");
+		cpgl_debug("JOIN: Done\n");
 
 		total_members = memberlen;
 	}
 
-	//printf("members %d now, %d joined, %d left\n", memberlen, joinlen, leftlen);
+	//cpgl_debug("members %d now, %d joined, %d left\n", memberlen, joinlen, leftlen);
 #if 0
 
 	/* XXX process join on receipt of JOIN message rather than here 
@@ -955,7 +957,7 @@ cpg_config_change(cpg_handle_t h,
 	for (x = 0; x < joinlen; x++) {
 		n = do_alloc(sizeof(*n));
 		n->nodeid = join[x].nodeid;
-		printf("ADD: node %d\n", n->nodeid);
+		cpgl_debug("ADD: node %d\n", n->nodeid);
 		list_insert(&group_members, n);
 	}
 #endif
@@ -965,7 +967,7 @@ cpg_config_change(cpg_handle_t h,
 		list_for(&group_members, n, y) {
 			if (n->nodeid == left[x].nodeid) {
 				list_remove(&group_members, n);
-				printf("DELETE: node %d\n", n->nodeid);
+				cpgl_debug("DELETE: node %d\n", n->nodeid);
 				del_node(n->nodeid);
 				free(n);
 				break;
@@ -978,11 +980,11 @@ cpg_config_change(cpg_handle_t h,
 	}
 
 #if 0
-	printf("MEMBERS:");
+	cpgl_debug("MEMBERS:");
 	list_for(&group_members, n, y) {
-		printf(" %d", n->nodeid);
+		cpgl_debug(" %d", n->nodeid);
 	}
-	printf("\n");
+	cpgl_debug("\n");
 #endif
 
 	return;
@@ -1112,7 +1114,7 @@ main(int argc, char **argv)
 					continue;
 				--n;
 				if (read_retry(client->fd, &m, sizeof(m), NULL) < 0) {
-					printf("Closing client fd %d pid %d: %d\n",
+					cpgl_debug("Closing client fd %d pid %d: %d\n",
 					       client->fd, client->pid, errno);
 			
 					del_client(client->fd);
@@ -1127,7 +1129,7 @@ main(int argc, char **argv)
 				}
 
 				if (m.request == MSG_UNLOCK) {
-					//printf("Unlock from fd %d\n", client->fd);
+					//cpgl_debug("Unlock from fd %d\n", client->fd);
 					find_lock(&m);
 					if (grant_next(&m) == 0)
 						send_unlock(&m);
