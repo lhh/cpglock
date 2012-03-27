@@ -97,7 +97,7 @@ cpg_lock(void *handle, const char *resource, lock_flag_t flags, struct cpg_lock 
 
 	if (!h) {
 		errno = EINVAL;
-		goto out;
+		return -1;
 	}
 
 	pthread_mutex_lock(&h->mutex);
