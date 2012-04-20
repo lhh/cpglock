@@ -5,18 +5,24 @@
 #include <sys/select.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
 #include <time.h>
+#include <assert.h>
 #include <sys/uio.h>
+
 #include <corosync/cpg.h>
+
+#include <ccs.h>
+#include <libcman.h>
+#include <libfenced.h>
 
 #include "daemon_init.h"
 #include "sock.h"
 #include "cpglock.h"
 #include "cpglock-internal.h"
 #include "list.h"
-
 
 struct request_node {
 	list_head();
@@ -26,6 +32,12 @@ struct request_node {
 struct lock_node {
 	list_head();
 	struct cpg_lock l;
+};
+
+struct pending_fence_node {
+	list_head();
+	int nodeid;
+	uint64_t fail_time;
 };
 
 struct client_node {
@@ -48,6 +60,7 @@ struct msg_node {
 /* Local vars  */
 static cpg_handle_t cpg;
 static uint32_t my_node_id = 0;
+static struct pending_fence_node *pending_fencing = NULL;
 static struct request_node *requests = NULL;
 static struct lock_node *locks = NULL;
 static struct client_node *clients = NULL;
@@ -57,7 +70,186 @@ static int total_members = 0;
 static int local_lockid = 0;
 static int message_count = 0;
 static int joined = 0;
+static int cluster_quorate = 0;
+static int shutdown_requested = 0;
 
+static cman_node_t cman_nodes[CPG_MEMBERS_MAX];
+static int cman_node_count;
+
+static cman_node_t old_cman_nodes[CPG_MEMBERS_MAX];
+static int old_cman_node_count;
+
+static int
+cman_nodes_lost(cman_node_t *old_nodes,
+				size_t old_node_len,
+				cman_node_t *new_nodes,
+				size_t new_node_len,
+				cman_node_t *lost_nodes,
+				size_t lost_nodes_size)
+{
+	int i;
+	size_t lost_nodes_len = 0;
+
+	if (lost_nodes_size < old_node_len) {
+		cpgl_debug("Lost nodes array smaller than old nodes array");
+		return -1;
+	}
+
+	for (i = 0 ; i < old_node_len ; i++) {
+		if (old_nodes[i].cn_member) {
+			int present_in_new_list = 0;
+			int j;
+
+			for (j = 0 ; j < new_node_len ; j++) {
+				if (new_nodes[j].cn_nodeid == old_nodes[i].cn_nodeid) {
+					present_in_new_list = 1;
+					if (!new_nodes[j].cn_member) {
+						memcpy(&lost_nodes[lost_nodes_len++],
+							&old_nodes[i], sizeof(*lost_nodes));
+						break;
+					}
+				}
+			}
+
+			if (!present_in_new_list) {
+				memcpy(&lost_nodes[lost_nodes_len++],
+					&old_nodes[i], sizeof(*lost_nodes));
+			}
+		}
+	}
+
+	return lost_nodes_len;
+}
+
+static int
+node_has_fencing(int nodeid)
+{
+	int ccs_desc;
+	char *val = NULL;
+	char buf[1024];
+	int ret = 1;
+
+	ccs_desc = ccs_connect();
+	if (ccs_desc < 0) {
+		cpgl_debug("Unable to connect to ccsd\n");
+		/* Assume node has fencing */
+		return 1;
+	}
+
+	snprintf(buf, sizeof(buf),
+		 "/cluster/clusternodes/clusternode[@nodeid=\"%d\"]"
+		 "/fence/method/device/@name", nodeid);
+
+	if (ccs_get(ccs_desc, buf, &val) != 0)
+		ret = 0;
+	if (val)
+		free(val);
+	ccs_disconnect(ccs_desc);
+	return ret;
+}
+
+static int
+fence_domain_joined(void) {
+	int ret;
+	struct fenced_node fn;
+
+	ret = fenced_node_info(FENCED_NODEID_US, &fn);
+	if (ret < 0) {
+		cpgl_debug("Unable to determine fence domain membership\n");
+		return 0;
+	}
+
+	return fn.member;
+}
+
+static void
+cman_callback(cman_handle_t ch, void *privdata, int reason, int arg)
+{
+	if (reason == CMAN_REASON_STATECHANGE) {
+		int i;
+		int ret;
+		int nl;
+		time_t cur_time = time(NULL);
+		size_t nodes_elem = sizeof(cman_nodes) / sizeof(cman_nodes[0]);
+		cman_node_t lost_nodes[nodes_elem];
+
+		cluster_quorate = arg;
+
+		memcpy(&old_cman_nodes, &cman_nodes, sizeof(old_cman_nodes));
+		old_cman_node_count = cman_node_count;
+
+		memset(&cman_nodes, 0, sizeof(cman_nodes));
+		cman_node_count = 0;
+
+		ret = cman_get_nodes(ch, nodes_elem, &cman_node_count, cman_nodes);
+		if (ret < 0) {
+			cpgl_debug("Unable to get cman nodes list\n");
+			return;
+		}
+
+		nl = cman_nodes_lost(old_cman_nodes, old_cman_node_count,
+				cman_nodes, cman_node_count, lost_nodes, nodes_elem);
+		if (nl < 0) {
+			cpgl_debug("Unable to get list of lost nodes");
+			return;
+		}
+
+		for (i = 0 ; i < nl ; i++) {
+			int cur_nodeid = lost_nodes[i].cn_nodeid;
+
+			if (node_has_fencing(cur_nodeid)) {
+				struct pending_fence_node *pf;
+
+				cpgl_debug("Lost node %d\n", cur_nodeid);
+				pf = do_alloc(sizeof(*pf));
+				pf->nodeid = cur_nodeid;
+				pf->fail_time = cur_time;
+				list_append(&pending_fencing, pf);
+			} else {
+				cpgl_debug("Lost node %d but fencing not configured\n",
+					cur_nodeid);
+			}
+		}
+	} else if (reason == CMAN_REASON_TRY_SHUTDOWN) {
+		shutdown_requested = 1;
+	}
+}
+
+static void
+wait_for_fencing_join(int nodeid)
+{
+	if (node_has_fencing(nodeid)) {
+		cpgl_debug("Waiting for fence domain join operation to complete\n");
+		while (!fence_domain_joined())
+			sleep(1);
+		cpgl_debug("Fence domain joined\n");
+	} else
+		cpgl_debug("No fencing is configured, not waiting\n");
+}
+
+static void
+wait_for_quorum_formation(cman_handle_t ch) {
+	cpgl_debug("Waiting for quorum to form\n");
+	while (!(cluster_quorate = cman_is_quorate(ch)))
+		sleep(1);
+	cpgl_debug("Quorum formed\n");
+}
+
+static int
+cman_connect(cman_handle_t *ch)
+{
+	assert(ch != NULL);
+
+	*ch = cman_init(NULL);
+	if (!*ch) {
+		cpgl_debug("Waiting for CMAN to start\n");
+		while (!(*ch = cman_init(NULL)))
+			sleep(1);
+		cpgl_debug("CMAN started\n");
+	}
+
+	return 0;
+}
 
 static const char *
 ls2str(int x)
@@ -968,6 +1160,10 @@ cpg_config_change(cpg_handle_t h,
 		list_for(&group_members, n, y) {
 			if (n->nodeid == left[x].nodeid) {
 				if (n->pid == left[x].pid) {
+					if (n->nodeid == my_node_id) {
+						cpgl_debug("Received DELETE message for self. Exiting.");
+						exit(0);
+					}
 					list_remove(&group_members, n);
 					cpgl_debug("DELETE: node %d.%u\n", n->nodeid, n->pid);
 					del_node(n->nodeid);
@@ -1087,37 +1283,101 @@ main(int argc, char **argv)
 	int fd;
 	int cpgfd;
 	int afd = -1;
+	int cman_fd;
 	int n,x;
 	int nofork = 0;
+	int wait_for_quorum = 1;
+	int wait_for_fencing = 1;
 	int opt;
+	int ret;
 	struct cpg_lock_msg m;
 	struct client_node *client;
+	cman_handle_t cman_handle = NULL;
+	cman_node_t my_node;
 
-	while ((opt = getopt(argc, argv, "fh")) != EOF) {
+	while ((opt = getopt(argc, argv, "FQfh")) != EOF) {
 		switch (opt) {
+			case 'F':
+				wait_for_fencing = 0;
+				break;
+			case 'Q':
+				wait_for_quorum = 0;
+				break;
 			case 'f':
 				nofork = 1;
 				break;
 			case 'h':
 				printf("Usage: %s [options]\n\
+ -F      Don't wait for the current node to join the fencing domain at startup\n\
+ -Q      Don't wait for quorum formation at startup\n\
  -f      Don't daemonize\n\
  -h      Print this help message\n",
 					argv[0]);
 				return 0;
+			default:
+				return -1;
 		}
 	}
 
 	signal(SIGPIPE, SIG_IGN);
 
-	if (cpg_init() < 0) {
-		fprintf(stderr, "Unable to join CPG group\n");
+	cman_connect(&cman_handle);
+	if (cman_handle == NULL) {
+		fprintf(stderr, "Unable to connect to cman\n");
 		return -1;
 	}
+
+	if (wait_for_quorum)
+		wait_for_quorum_formation(cman_handle);
+
+	memset(&my_node, 0, sizeof(my_node));
+	cman_get_node(cman_handle, CMAN_NODEID_US, &my_node);
+
+	if (my_node.cn_nodeid == 0) {
+		fprintf(stderr, "Unable to get our cluster node ID\n");
+		cman_finish(cman_handle);
+		return -1;
+	}
+
+	if (wait_for_fencing)
+		wait_for_fencing_join(my_node.cn_nodeid);
+
+	memset(&cman_nodes, 0, sizeof(cman_nodes));
+	cman_node_count = 0;
+
+	ret = cman_get_nodes(cman_handle,
+			sizeof(cman_nodes) / sizeof(cman_nodes[0]),
+			&cman_node_count, cman_nodes);
+	if (ret < 0) {
+		fprintf(stderr, "Unable to get cman nodes list\n");
+		cman_finish(cman_handle);
+		return -1;
+	}
+
+	cman_fd = cman_get_fd(cman_handle);
+	if (cman_fd < 0) {
+		fprintf(stderr, "Error: cman fd is %d\n", cman_fd);
+		cman_finish(cman_handle);
+		return -1;
+	}
+
+	cman_start_notification(cman_handle, cman_callback);
+
+	if (cpg_init() < 0) {
+		fprintf(stderr, "Unable to join CPG group\n");
+		cman_stop_notification(cman_handle);
+		cman_finish(cman_handle);
+		return -1;
+	}
+
+	assert(my_node.cn_nodeid == my_node_id);
 
 	fd = sock_listen(CPG_LOCKD_SOCK);
 	if (fd < 0) {
 		fprintf(stderr, "Error connecting to %s: %s\n",
 			CPG_LOCKD_SOCK, strerror(errno));
+		cman_stop_notification(cman_handle);
+		cman_finish(cman_handle);
 		cpg_fin();
 		return -1;
 	}
@@ -1131,6 +1391,9 @@ main(int argc, char **argv)
 		return -1;
 
 	while (1) {
+		struct timeval tv;
+		struct pending_fence_node *pf_node;
+
 		FD_ZERO(&rfds);
 		x = client_fdset(&rfds);
 		FD_SET(fd, &rfds);
@@ -1139,11 +1402,83 @@ main(int argc, char **argv)
 		FD_SET(cpgfd, &rfds);
 		if (cpgfd > x)
 			x = cpgfd;
-		
-		n = select_retry(x+1, &rfds, NULL, NULL, NULL);
+		cman_fd = cman_get_fd(cman_handle);
+		FD_SET(cman_fd, &rfds);
+		if (cman_fd > x)
+			x = cman_fd;
+
+		tv.tv_sec = 0;
+		tv.tv_usec = 500000;
+
+		n = select_retry(x+1, &rfds, NULL, NULL, &tv);
 		if (n < 0) {
-			perror("select");
+			fprintf(stderr, "Error: select: %s\n", strerror(errno));
 			return -1;
+		}
+
+		if (FD_ISSET(cman_fd, &rfds)) {
+			if (cman_dispatch(cman_handle, CMAN_DISPATCH_ALL) < 0) {
+				fprintf(stderr, "Fatal: cman_dispatch() failed: %s\n",
+					strerror(errno));
+				return -1;
+			}
+			--n;
+		}
+
+		if (shutdown_requested) {
+			cman_replyto_shutdown(cman_handle, 1);
+			fprintf(stderr, "Fatal: cman requested shutdown.\n");
+			return -1;
+		}
+
+		fence_check:
+		list_for(&pending_fencing, pf_node, x) {
+			int victim;
+			uint64_t lft;
+			struct fenced_node fn;
+
+			ret = fenced_node_info(pf_node->nodeid, &fn);
+			if (ret < 0) {
+				cpgl_debug("Unable to get last fenced time for node %d\n",
+					pf_node->nodeid);
+				victim = 1;
+				lft = 0;
+			} else {
+				victim = fn.victim;
+				lft = fn.last_fenced_time;
+			}
+
+			if (lft > pf_node->fail_time) {
+				cpgl_debug("Fencing for node %d finished at %ld (>%ld)\n",
+					pf_node->nodeid, lft, pf_node->fail_time);
+				list_remove(&pending_fencing, pf_node);
+				free(pf_node);
+				goto fence_check;
+			}
+
+			/*
+			** If node A either fails or leaves the cluster cleanly while
+			** fencing is outstanding on another node (or nodes), we aren't
+			** able to determine whether A has failed or left cleanly until
+			** fencing has completed for the nodes that have left or failed
+			** prior to A while any fencing is outstanding. The first entry
+			** in this list will be the node that has left or failed longer
+			** ago than any others in the list. If fenced has not set
+			** victim to 1 by now, we can deduce it has left cleanly, and we
+			** don't need to wait for it.
+			*/
+			if (!victim && !x) {
+				cpgl_debug("First entry in list and victim == 0, removing from pending fencing\n");
+				list_remove(&pending_fencing, pf_node);
+				free(pf_node);
+				goto fence_check;
+			}
+		}
+
+		/* While fencing is pending for any nodes pause lock activity. */
+		if (pending_fencing != NULL) {
+			usleep(500000);
+			continue;
 		}
 
 		if (FD_ISSET(fd, &rfds)) {
@@ -1153,7 +1488,10 @@ main(int argc, char **argv)
 		}
 
 		if (FD_ISSET(cpgfd, &rfds)) {
-			cpg_dispatch(cpg, CPG_DISPATCH_ALL);
+			if (cpg_dispatch(cpg, CPG_DISPATCH_ALL) != CPG_OK) {
+				fprintf(stderr, "Fatal: Lost CPG connection.\n");
+				return -1;
+			}
 			--n;
 		}
 
@@ -1201,6 +1539,8 @@ main(int argc, char **argv)
 		} while (n);
 	}
 
+	cman_stop_notification(cman_handle);
+	cman_finish(cman_handle);
 	cpg_fin();
 
 	return 0;
