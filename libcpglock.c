@@ -250,8 +250,10 @@ cpg_lock_dump(FILE *fp)
 	memset(&l, 0, sizeof(l));
 	l.request = MSG_DUMP;
 	
-	if (write_retry(fd, &l, sizeof(l), 0) < 0)
+	if (write_retry(fd, &l, sizeof(l), 0) < 0) {
+		close(fd);
 		return -1;
+	}
 
 	while (read_retry(fd, &c, 1, 0) == 1)
 		fprintf(fp, "%c", c);
