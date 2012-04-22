@@ -594,8 +594,23 @@ del_node(uint32_t nodeid)
 	struct lock_node *l;
 	int x, recovered = 0, granted = 0;
 
-	if (group_members->nodeid != my_node_id)
+	if (group_members->nodeid != my_node_id) {
+		/*
+  		** Update the owner and pid of any locks owned by the deleted
+		** node to those of the oldest node in the group.
+		*/
+		list_for(&locks, l, x) {
+			if (l->l.owner_nodeid == nodeid) {
+				cpgl_debug("RECOVERY: LOCK UPDATED: %s [%d:%d]=>[%d:%d]\n",
+					l->l.resource,
+					l->l.owner_nodeid, l->l.owner_pid,
+					group_members->nodeid, group_members->pid);
+				l->l.owner_nodeid = group_members->nodeid;
+				l->l.owner_pid = group_members->pid;
+			}
+		}
 		return;
+	}
 
 	cpgl_debug("RECOVERY: I am oldest node in the group, recovering locks\n");
 
@@ -612,19 +627,34 @@ del_node(uint32_t nodeid)
 	send_lock_msg(&m);
 
 	list_for(&locks, l, x) {
-		if (l->l.owner_nodeid == nodeid && 
-		    l->l.state == LOCK_HELD) {
+		if (l->l.owner_nodeid == nodeid && l->l.state == LOCK_HELD) {
 			cpgl_debug("RECOVERY: Releasing %s held by dead node %d\n",
 				l->l.resource, nodeid);
 
 			l->l.state = LOCK_FREE;
 			strncpy(m.resource, l->l.resource, sizeof(m.resource));
-			if (grant_next(&m) == 0)
+			if (grant_next(&m) == 0) {
+				cpgl_debug("RECOVERY: HELD LOCK UPDATED: %s [%d:%d]=>[%d:%d]\n",
+					l->l.resource,
+					l->l.owner_nodeid, l->l.owner_pid,
+					my_node_id, getpid());
+				l->l.owner_nodeid = my_node_id;
+				l->l.owner_pid = getpid();
+				m.owner_nodeid = my_node_id;
+				m.owner_pid = getpid();
 				send_unlock(&m);
+			}
 			++recovered;
-		} else if (l->l.state == LOCK_FREE) {
-			if (grant_next(&m) == 0)
-				send_unlock(&m);
+		} else if (l->l.owner_nodeid == nodeid && l->l.state == LOCK_FREE) {
+			strncpy(m.resource, l->l.resource, sizeof(m.resource));
+			if (grant_next(&m) == 0) {
+				cpgl_debug("RECOVERY: FREE LOCK UPDATED: %s [%d:%d]=>[%d:%d]\n",
+					l->l.resource,
+					l->l.owner_nodeid, l->l.owner_pid,
+					my_node_id, getpid());
+				l->l.owner_nodeid = my_node_id;
+				l->l.owner_pid = getpid();
+			}
 			++granted;
 		}
 	}
