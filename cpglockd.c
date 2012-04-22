@@ -1473,9 +1473,25 @@ main(int argc, char **argv)
 			** don't need to wait for it.
 			*/
 			if (!victim && !x) {
-				cpgl_debug("First entry in list and victim == 0, removing from pending fencing\n");
-				list_remove(&pending_fencing, pf_node);
-				free(pf_node);
+				int retries = 0;
+				/* Wait up to 1s for fenced to set victim */
+				do {
+					usleep(250000);
+					if (fenced_node_info(pf_node->nodeid, &fn) < 0) {
+						cpgl_debug("Unable to get fenced data for node %d\n",
+							pf_node->nodeid);
+					} else
+						victim = fn.victim;
+				} while (!victim && retries++ < 4);
+
+				if (!victim) {
+					cpgl_debug("First entry in list and victim == 0, removing %d from pending fencing\n", pf_node->nodeid);
+					list_remove(&pending_fencing, pf_node);
+					free(pf_node);
+				} else {
+					cpgl_debug("fenced_node.victim flipped to 1 for %d\n",
+						pf_node->nodeid);
+				}
 				goto fence_check;
 			}
 		}
