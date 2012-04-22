@@ -401,9 +401,14 @@ send_lock_msg(struct cpg_lock_msg *m)
 	iov.iov_base = m;
 	iov.iov_len = sizeof (*m);
 
-	ret = cpg_mcast_joined(cpg, CPG_TYPE_AGREED, &iov, 1);
-	if (ret != CPG_OK)
-		return -1;
+	do {
+		ret = cpg_mcast_joined(cpg, CPG_TYPE_AGREED, &iov, 1);
+		if (ret != CPG_OK) {
+			cpgl_debug("send_lock_msg() failed\n");
+			usleep(250000);
+		}
+	} while (ret != CPG_OK);
+
 	return 0;
 }
 
